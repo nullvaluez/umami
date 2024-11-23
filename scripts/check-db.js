@@ -5,12 +5,16 @@ const chalk = require('chalk');
 const { execSync } = require('child_process');
 const semver = require('semver');
 
+// List of database environment variables to check
+const DATABASE_URLS = ['DATABASE_URL', 'DIRECT_DATABASE_URL'];
+
 if (process.env.SKIP_DB_CHECK) {
   console.log('Skipping database check.');
   process.exit(0);
 }
 
-function getDatabaseType(url = process.env.DATABASE_URL) {
+// Function to retrieve database type from a given URL
+function getDatabaseType(url) {
   const type = url && url.split(':')[0];
 
   if (type === 'postgres') {
@@ -20,86 +24,104 @@ function getDatabaseType(url = process.env.DATABASE_URL) {
   return type;
 }
 
-const prisma = new PrismaClient();
-
+// Success and error message helpers
 function success(msg) {
-  console.log(chalk.greenBright(✓ ${msg}));
+  console.log(chalk.greenBright(`✓ ${msg}`));
 }
 
 function error(msg) {
-  console.log(chalk.redBright(✗ ${msg}));
+  console.log(chalk.redBright(`✗ ${msg}`));
 }
 
+// Function to check if the required environment variables are defined
 async function checkEnv() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is not defined.');
-  } else {
-    success('DATABASE_URL is defined.');
-  }
-}
-
-async function checkConnection() {
-  try {
-    await prisma.$connect();
-
-    success('Database connection successful.');
-  } catch (e) {
-    throw new Error('Unable to connect to the database: ' + e.message);
-  }
-}
-
-async function checkDatabaseVersion() {
-  const query = await prisma.$queryRawselect version() as version;
-  const version = semver.valid(semver.coerce(query[0].version));
-
-  const databaseType = getDatabaseType();
-  const minVersion = databaseType === 'postgresql' ? '9.4.0' : '5.7.0';
-
-  if (semver.lt(version, minVersion)) {
-    throw new Error(
-      Database version is not compatible. Please upgrade ${databaseType} version to ${minVersion} or greater,
-    );
-  }
-
-  success('Database version check successful.');
-}
-
-async function checkV1Tables() {
-  try {
-    // check for v1 migrations before v2 release date
-    const record =
-      await prisma.$queryRawselect * from _prisma_migrations where started_at < '2023-04-17';
-
-    if (record.length > 0) {
-      error(
-        'Umami v1 tables detected. For how to upgrade from v1 to v2 go to https://umami.is/docs/migrate-v1-v2.',
-      );
-      process.exit(1);
+  let allDefined = true;
+  DATABASE_URLS.forEach((envVar) => {
+    if (!process.env[envVar]) {
+      error(`${envVar} is not defined.`);
+      allDefined = false;
+    } else {
+      success(`${envVar} is defined.`);
     }
-  } catch (e) {
-    // Ignore
+  });
+
+  if (!allDefined) {
+    throw new Error('One or more required database environment variables are missing.');
   }
 }
 
-async function applyMigration() {
-  console.log(execSync('prisma migrate deploy').toString());
+// Function to perform checks for a single database URL
+async function performChecks(dbUrl, label) {
+  const prisma = new PrismaClient({
+    datasources: {
+      db: {
+        url: dbUrl,
+      },
+    },
+  });
 
-  success('Database is up to date.');
+  try {
+    // Check database connection
+    await prisma.$connect();
+    success(`[${label}] Database connection successful.`);
+
+    // Check database version
+    const queryResult = await prisma.$queryRaw`SELECT version()`;
+    const versionString = queryResult[0].version;
+    const version = semver.valid(semver.coerce(versionString));
+
+    const databaseType = getDatabaseType(dbUrl);
+    const minVersion = databaseType === 'postgresql' ? '9.4.0' : '5.7.0';
+
+    if (!version) {
+      throw new Error(`[${label}] Unable to parse database version.`);
+    }
+
+    if (semver.lt(version, minVersion)) {
+      throw new Error(
+        `[${label}] Database version is not compatible. Please upgrade ${databaseType} to version ${minVersion} or greater.`,
+      );
+    }
+
+    success(`[${label}] Database version (${version}) is compatible.`);
+
+    // Check for v1 migrations
+    const migrations = await prisma.$queryRaw`SELECT * FROM _prisma_migrations WHERE started_at < '2023-04-17'`;
+    if (migrations.length > 0) {
+      error(
+        `[${label}] Umami v1 tables detected. To upgrade from v1 to v2, visit https://umami.is/docs/migrate-v1-v2.`,
+      );
+      throw new Error(`[${label}] Umami v1 tables detected.`);
+    } else {
+      success(`[${label}] No Umami v1 tables detected.`);
+    }
+
+    // Apply migrations
+    console.log(execSync('npx prisma migrate deploy').toString());
+    success(`[${label}] Database is up to date.`);
+  } catch (e) {
+    throw new Error(`[${label}] ${e.message}`);
+  } finally {
+    await prisma.$disconnect();
+  }
 }
 
 (async () => {
-  let err = false;
-  for (let fn of [checkEnv, checkConnection, checkDatabaseVersion, checkV1Tables, applyMigration]) {
-    try {
-      await fn();
-    } catch (e) {
-      error(e.message);
-      err = true;
-    } finally {
-      await prisma.$disconnect();
-      if (err) {
-        process.exit(1);
-      }
+  try {
+    await checkEnv();
+
+    // Iterate over each database URL and perform checks
+    for (const envVar of DATABASE_URLS) {
+      const dbUrl = process.env[envVar];
+      const label = envVar; // Label to identify which URL is being checked
+
+      await performChecks(dbUrl, label);
     }
+
+    console.log(chalk.blueBright('All database checks passed successfully.'));
+    process.exit(0);
+  } catch (e) {
+    error(e.message);
+    process.exit(1);
   }
 })();
