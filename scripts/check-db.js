@@ -23,11 +23,11 @@ function getDatabaseType(url = process.env.DATABASE_URL) {
 const prisma = new PrismaClient();
 
 function success(msg) {
-  console.log(chalk.greenBright(✓ ${msg}));
+  console.log(chalk.greenBright(`✓ ${msg}`));
 }
 
 function error(msg) {
-  console.log(chalk.redBright(✗ ${msg}));
+  console.log(chalk.redBright(`✗ ${msg}`));
 }
 
 async function checkEnv() {
@@ -49,7 +49,7 @@ async function checkConnection() {
 }
 
 async function checkDatabaseVersion() {
-  const query = await prisma.$queryRawselect version() as version;
+  const query = await prisma.$queryRaw`select version() as version`;
   const version = semver.valid(semver.coerce(query[0].version));
 
   const databaseType = getDatabaseType();
@@ -57,7 +57,7 @@ async function checkDatabaseVersion() {
 
   if (semver.lt(version, minVersion)) {
     throw new Error(
-      Database version is not compatible. Please upgrade ${databaseType} version to ${minVersion} or greater,
+      `Database version is not compatible. Please upgrade ${databaseType} version to ${minVersion} or greater`,
     );
   }
 
@@ -68,7 +68,7 @@ async function checkV1Tables() {
   try {
     // check for v1 migrations before v2 release date
     const record =
-      await prisma.$queryRawselect * from _prisma_migrations where started_at < '2023-04-17';
+      await prisma.$queryRaw`select * from _prisma_migrations where started_at < '2023-04-17'`;
 
     if (record.length > 0) {
       error(
