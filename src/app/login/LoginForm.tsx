@@ -36,8 +36,7 @@ export function LoginForm() {
 
   return (
     <div className={styles.login}>
-      <img src={Logo} alt="Logo" className={styles.icon} />
-      <div className={styles.title}>umami</div>
+      <div className={styles.title}>Blowpop Media | Client Dashboard Login</div>
       <Form className={styles.form} onSubmit={handleSubmit} error={getMessage(error)}>
         <FormRow label={formatMessage(labels.username)}>
           <FormInput
