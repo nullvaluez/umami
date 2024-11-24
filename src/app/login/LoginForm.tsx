@@ -36,7 +36,7 @@ export function LoginForm() {
 
   return (
     <div className={styles.login}>
-      <div className={styles.title}>Blowpop Media | Client Dashboard Login</div>
+      <div className={styles.title}>Client Dashboard Login</div>
       <Form className={styles.form} onSubmit={handleSubmit} error={getMessage(error)}>
         <FormRow label={formatMessage(labels.username)}>
           <FormInput
